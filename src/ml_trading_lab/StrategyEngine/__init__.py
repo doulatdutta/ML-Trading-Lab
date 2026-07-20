@@ -1,5 +1,5 @@
 """Transparent strategy-rule and candidate definitions."""
 
-from .strategy import StrategyDefinition
+from .strategy import StrategyDefinition, TradeSetup, TradeOutcome, EMASmoothingBBStrategy
 
-__all__ = ["StrategyDefinition"]
+__all__ = ["StrategyDefinition", "TradeSetup", "TradeOutcome", "EMASmoothingBBStrategy"]

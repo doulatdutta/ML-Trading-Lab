@@ -9,6 +9,7 @@ venv/
 
 # Local configuration and secrets
 .env
+Config/settings.yaml
 Config/local.*
 Config/*.secrets.*
 
