@@ -1,0 +1,23 @@
+project:
+  name: ML Trading Lab
+  timezone: UTC
+
+data:
+  raw_directory: data/raw
+  processed_directory: data/processed
+  symbol: XAUUSD
+  timeframe: M15
+
+research:
+  random_seed: 42
+  training_start: "2018-01-01"
+  validation_start: "2023-01-01"
+  test_start: "2024-01-01"
+
+risk:
+  mode: advisory_only
+  allow_live_execution: false
+
+mt5:
+  enabled: false
+  terminal_path: ""

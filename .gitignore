@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Local configuration and secrets
+.env
+Config/local.*
+Config/*.secrets.*
+
+# Data, trained artifacts, logs, and reports
+data/
+artifacts/
+logs/
+reports/
+*.sqlite
+*.db
+*.joblib
+*.pkl
+*.onnx
+
+# MetaTrader generated files
+*.ex5
+*.log
+
+# Editors and operating systems
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
