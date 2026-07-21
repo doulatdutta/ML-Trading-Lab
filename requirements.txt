@@ -1,0 +1,5 @@
+# Install a focused environment first: pip install -e .[dev]
+# Add ML dependencies when the training milestone begins: pip install -e .[dev,ml]
+# Add MetaTrader5 only on a Windows machine with MT5 installed: pip install -e .[mt5]
+
+-e .[dev]
