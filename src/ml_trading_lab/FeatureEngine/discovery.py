@@ -375,6 +375,9 @@ class FeatureDiscoveryEngine:
             "ema_slope", "ema_accel", "bb_width_pct", "totalGap",
             "atr_percentile", "price_in_bb", "price_in_ema_band",
             "bb_squeeze_duration", "candle_body_pct",
+            "rsi_14", "adx_14", "close_to_vwap_atr",
+            "liq_sweep_bull_20", "liq_sweep_bear_20",
+            "liq_sweep_lower_wick_ratio", "liq_sweep_upper_wick_ratio"
         ]
         available = [f for f in key_features if f in df.columns]
         lag_exprs = []

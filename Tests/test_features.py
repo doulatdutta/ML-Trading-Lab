@@ -113,3 +113,34 @@ def test_csv_collector_synthetic_generation(tmp_path) -> None:
     # Check that file was saved to raw_directory
     saved_file = tmp_path / f"{symbol}_{timeframe}.csv"
     assert saved_file.exists()
+
+
+def test_new_indicators_and_feature_flags(sample_market_data: pl.DataFrame) -> None:
+    """Verify that RSI, ADX, VWAP, and Liquidity Sweep features are computed and can be disabled via flags."""
+    # Test with all features enabled
+    engine_enabled = FeatureEngine(parameters={
+        "enable_liquidity_sweeps": True,
+        "enable_rsi_adx": True,
+        "enable_vwap": True,
+    })
+    df_enabled = engine_enabled.transform(sample_market_data)
+
+    assert "rsi_14" in df_enabled.columns
+    assert "adx_14" in df_enabled.columns
+    assert "vwap_100" in df_enabled.columns
+    assert "liq_sweep_bull_20" in df_enabled.columns
+    assert "liq_sweep_depth_bull_20" in df_enabled.columns
+
+    # Test with features disabled
+    engine_disabled = FeatureEngine(parameters={
+        "enable_liquidity_sweeps": False,
+        "enable_rsi_adx": False,
+        "enable_vwap": False,
+    })
+    df_disabled = engine_disabled.transform(sample_market_data)
+
+    assert "rsi_14" not in df_disabled.columns
+    assert "adx_14" not in df_disabled.columns
+    assert "vwap_100" not in df_disabled.columns
+    assert "liq_sweep_bull_20" not in df_disabled.columns
+

@@ -21,3 +21,11 @@ risk:
 mt5:
   enabled: false
   terminal_path: ""
+
+features:
+  enable_liquidity_sweeps: true
+  enable_rsi_adx: true
+  enable_vwap: true
+  enable_mtf: true
+  setup_mode: combined_all
+

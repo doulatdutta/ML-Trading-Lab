@@ -53,11 +53,12 @@ class EMASmoothingBBStrategy:
         self.sqz_threshold = self.parameters.get("sqz_threshold", 5.0)
         self.atr_sl_mult = self.parameters.get("atr_sl_mult", 1.5)
         self.atr_tp_mult = self.parameters.get("atr_tp_mult", 3.0)
+        self.setup_mode = self.parameters.get("setup_mode", "combined_all")
         self.ml_filter_fn = ml_filter_fn
 
     def detect_setups(self, df: pl.DataFrame, symbol: str, timeframe: str) -> list[TradeSetup]:
         """Detect long and short setups in the feature DataFrame."""
-        # Ensure we have all necessary columns
+        # Ensure we have all necessary base columns
         required_cols = [
             "close", "bb_upper", "bb_lower", "emaUp", "emaDn",
             "totalGap", "bbUp_sl", "bbDn_sl", "atr", "timestamp"
@@ -70,9 +71,8 @@ class EMASmoothingBBStrategy:
         m3_longAlign = pl.col("m3_longAlign") if "m3_longAlign" in df.columns else pl.lit(True)
         m3_shortAlign = pl.col("m3_shortAlign") if "m3_shortAlign" in df.columns else pl.lit(True)
 
-        # Long crossover condition:
-        # BB Lower crosses above EMA BB Lower + BB Upper rising + expanding + squeezed (on completed bar)
-        long_cond = (
+        # 1. Standard Crossover Conditions
+        long_cross_cond = (
             (df["bb_lower"].shift(1) <= df["emaDn"].shift(1)) &
             (df["bb_lower"] > df["emaDn"]) &
             (df["bb_upper"] > df["bbUp_sl"]) &
@@ -81,9 +81,7 @@ class EMASmoothingBBStrategy:
             m3_longAlign
         )
 
-        # Short crossover condition:
-        # BB Upper crosses below EMA BB Upper + BB Lower falling + expanding + squeezed (on completed bar)
-        short_cond = (
+        short_cross_cond = (
             (df["bb_upper"].shift(1) >= df["emaUp"].shift(1)) &
             (df["bb_upper"] < df["emaUp"]) &
             (df["bb_lower"] < df["bbDn_sl"]) &
@@ -91,6 +89,37 @@ class EMASmoothingBBStrategy:
             (df["totalGap"].shift(1) <= self.sqz_threshold) &
             m3_shortAlign
         )
+
+        # 2. Liquidity Sweep Setup Conditions (if feature is present)
+        has_sweep = "liq_sweep_bull_20" in df.columns
+        if has_sweep:
+            wick_bull_cond = (pl.col("liq_sweep_lower_wick_ratio") >= 0.30) if "liq_sweep_lower_wick_ratio" in df.columns else pl.lit(True)
+            wick_bear_cond = (pl.col("liq_sweep_upper_wick_ratio") >= 0.30) if "liq_sweep_upper_wick_ratio" in df.columns else pl.lit(True)
+
+            long_sweep_cond = (
+                ((pl.col("liq_sweep_bull_20") == 1.0) | (pl.col("liq_sweep_bull_50") == 1.0)) &
+                wick_bull_cond &
+                m3_longAlign
+            )
+            short_sweep_cond = (
+                ((pl.col("liq_sweep_bear_20") == 1.0) | (pl.col("liq_sweep_bear_50") == 1.0)) &
+                wick_bear_cond &
+                m3_shortAlign
+            )
+        else:
+            long_sweep_cond = pl.lit(False)
+            short_sweep_cond = pl.lit(False)
+
+        # Apply setup_mode selection
+        if self.setup_mode == "bb_ema_crossover":
+            long_cond = long_cross_cond
+            short_cond = short_cross_cond
+        elif self.setup_mode == "liquidity_sweep":
+            long_cond = long_sweep_cond
+            short_cond = short_sweep_cond
+        else: # combined_all
+            long_cond = long_cross_cond | long_sweep_cond
+            short_cond = short_cross_cond | short_sweep_cond
 
         # Select matching setups
         long_df = df.filter(long_cond)

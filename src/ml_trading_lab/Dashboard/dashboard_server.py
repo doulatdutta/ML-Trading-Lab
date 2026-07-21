@@ -96,6 +96,10 @@ FEATURE_COLS = [
     "session_asian", "session_london", "session_ny", "session_overlap",
     "bbUp_sl", "bbDn_sl",
     "liq_sweep_bull_20", "liq_sweep_bear_20", "liq_sweep_bull_50", "liq_sweep_bear_50",
+    "liq_sweep_depth_bull_20", "liq_sweep_depth_bear_20",
+    "liq_sweep_lower_wick_ratio", "liq_sweep_upper_wick_ratio",
+    "fvg_bullish", "fvg_bearish",
+    "rsi_14", "adx_14", "vwap_100", "close_to_vwap_atr",
 ]
 
 
@@ -244,23 +248,33 @@ def _get_best_model_and_features():
 
 @app.get("/api/backtest")
 def api_backtest(
-    sqz_threshold: float = Query(5.0),
-    atr_sl_mult:   float = Query(1.5),
-    atr_tp_mult:   float = Query(3.0),
-    bb_period:     int   = Query(20),
-    bb_std:        float = Query(1.0),
-    sm_std:        float = Query(2.5),
-    use_ml_filter: bool  = Query(False),
+    sqz_threshold:           float = Query(5.0),
+    atr_sl_mult:             float = Query(1.5),
+    atr_tp_mult:             float = Query(3.0),
+    bb_period:               int   = Query(20),
+    bb_std:                  float = Query(1.0),
+    sm_std:                  float = Query(2.5),
+    use_ml_filter:           bool  = Query(False),
+    setup_mode:              str   = Query("combined_all"),
+    enable_liquidity_sweeps: bool  = Query(True),
+    enable_rsi_adx:          bool  = Query(True),
+    enable_vwap:             bool  = Query(True),
+    enable_mtf:              bool  = Query(True),
 ) -> Dict[str, Any]:
     """Dynamic backtest with real/synthetic data."""
     params = {
         "sqz_threshold": sqz_threshold, "atr_sl_mult": atr_sl_mult,
         "atr_tp_mult": atr_tp_mult, "bb_period": bb_period,
         "bb_std": bb_std, "sm_std": sm_std,
+        "setup_mode": setup_mode,
+        "enable_liquidity_sweeps": enable_liquidity_sweeps,
+        "enable_rsi_adx": enable_rsi_adx,
+        "enable_vwap": enable_vwap,
+        "enable_mtf": enable_mtf,
     }
     ml_status = "with ML rules filter" if use_ml_filter else "raw strategy"
     _log_event("INFO", "Backtester",
-               f"Running backtest ({ml_status}) — sqz={sqz_threshold}, sl={atr_sl_mult}, tp={atr_tp_mult}")
+               f"Running backtest ({ml_status}, mode={setup_mode}) — sqz={sqz_threshold}, sl={atr_sl_mult}, tp={atr_tp_mult}")
     try:
         df_m1 = _load_market_data("XAUUSD", "M1")
         df_m3 = _load_market_data("XAUUSD", "M3")
@@ -1256,6 +1270,17 @@ td{padding:.6rem 1rem;font-family:var(--mono);font-size:.78rem}
       <!-- Controls -->
       <div class="card">
         <div class="card-title"><i data-lucide="sliders"></i> Strategy Parameters</div>
+
+        <!-- Setup Trigger Mode Selector -->
+        <div class="slider-group" style="margin-bottom:1rem">
+          <div class="slider-label"><span style="font-weight:600;color:var(--txt)">Setup Trigger Mode</span></div>
+          <select id="sel-setup-mode" style="width:100%;padding:8px 10px;background:var(--bg3);border:1px solid var(--border);color:var(--txt);border-radius:6px;font-size:.82rem;margin-top:4px;cursor:pointer;outline:none">
+            <option value="combined_all">Combined (All Setup Signals)</option>
+            <option value="liquidity_sweep">Liquidity Sweep Only (BSL/SSL Rejection)</option>
+            <option value="bb_ema_crossover">BB EMA Crossover Only</option>
+          </select>
+        </div>
+
         <div class="slider-group">
           <div class="slider-label"><span>Squeeze Gap Threshold</span><span id="lbl-sqz">5.0</span></div>
           <input type="range" id="sl-sqz" min="1" max="15" step=".5" value="5">
@@ -1276,7 +1301,25 @@ td{padding:.6rem 1rem;font-family:var(--mono);font-size:.78rem}
           <div class="slider-label"><span>EMA Band StdDev</span><span id="lbl-sms">2.5</span></div>
           <input type="range" id="sl-sms" min="1" max="4" step=".1" value="2.5">
         </div>
-        <div style="display:flex;align-items:center;gap:.5rem;margin-bottom:1rem;margin-top:.75rem">
+
+        <!-- Feature Engine Toggles -->
+        <div style="display:flex;flex-direction:column;gap:.4rem;margin-top:.75rem;margin-bottom:1rem;background:var(--bg3);padding:.75rem;border-radius:6px;border:1px solid var(--border)">
+          <div style="font-size:.78rem;font-weight:700;color:var(--cyan);margin-bottom:.2rem;text-transform:uppercase;letter-spacing:.5px">Feature Engine Toggles</div>
+          <label style="font-size:.8rem;color:var(--txt);cursor:pointer;display:flex;align-items:center;gap:.5rem">
+            <input type="checkbox" id="chk-liq-sweeps" checked style="accent-color:var(--cyan);cursor:pointer"> Enable Liquidity Sweeps (BSL/SSL)
+          </label>
+          <label style="font-size:.8rem;color:var(--txt);cursor:pointer;display:flex;align-items:center;gap:.5rem">
+            <input type="checkbox" id="chk-rsi-adx" checked style="accent-color:var(--cyan);cursor:pointer"> Enable RSI (14) & ADX (14) Signals
+          </label>
+          <label style="font-size:.8rem;color:var(--txt);cursor:pointer;display:flex;align-items:center;gap:.5rem">
+            <input type="checkbox" id="chk-vwap" checked style="accent-color:var(--cyan);cursor:pointer"> Enable Session VWAP Distance
+          </label>
+          <label style="font-size:.8rem;color:var(--txt);cursor:pointer;display:flex;align-items:center;gap:.5rem">
+            <input type="checkbox" id="chk-mtf" checked style="accent-color:var(--cyan);cursor:pointer"> Enable Multi-Timeframe (MTF) Alignment
+          </label>
+        </div>
+
+        <div style="display:flex;align-items:center;gap:.5rem;margin-bottom:1rem;margin-top:.5rem">
           <input type="checkbox" id="chk-ml-filter" style="width:16px;height:16px;accent-color:var(--cyan);cursor:pointer">
           <label for="chk-ml-filter" style="font-size:.82rem;font-weight:600;color:var(--txt);cursor:pointer">Enable ML Rule Filter (XGBoost/Model Arena)</label>
         </div>
@@ -1317,8 +1360,8 @@ td{padding:.6rem 1rem;font-family:var(--mono);font-size:.78rem}
       <div class="card">
         <div class="card-title"><i data-lucide="brain"></i> XGBoost Training</div>
         <div style="color:var(--muted);font-size:.85rem;margin-bottom:1rem">
-          Train the model on the strategy dataset (XAUUSD M1, Jan 2023 synthetic).
-          Feature matrix includes BB band features, EMA bands, ATR, sessions, and time context.
+          Train the model on the strategy dataset (XAUUSD M1 / M3).
+          Feature matrix includes BB & EMA bands, Liquidity Sweeps (BSL/SSL), RSI/ADX trend strength, VWAP distance, sessions, and MTF context.
         </div>
         <button class="btn btn-primary" id="ml-train-btn" onclick="startTraining()">
           <i data-lucide="play" style="width:15px;height:15px"></i> Train XGBoost Model
@@ -1714,7 +1757,13 @@ async function runBacktest() {
     const sqz = $('sl-sqz').value, sl = $('sl-sl').value, tp = $('sl-tp').value;
     const bbs = $('sl-bbs').value, sms = $('sl-sms').value;
     const useMl = $('chk-ml-filter').checked;
-    const d = await (await fetch(`/api/backtest?sqz_threshold=${sqz}&atr_sl_mult=${sl}&atr_tp_mult=${tp}&bb_std=${bbs}&sm_std=${sms}&use_ml_filter=${useMl}`)).json();
+    const setupMode = $('sel-setup-mode') ? $('sel-setup-mode').value : 'combined_all';
+    const enableLiq = $('chk-liq-sweeps') ? $('chk-liq-sweeps').checked : true;
+    const enableRsi = $('chk-rsi-adx') ? $('chk-rsi-adx').checked : true;
+    const enableVwap = $('chk-vwap') ? $('chk-vwap').checked : true;
+    const enableMtf = $('chk-mtf') ? $('chk-mtf').checked : true;
+    const url = `/api/backtest?sqz_threshold=${sqz}&atr_sl_mult=${sl}&atr_tp_mult=${tp}&bb_std=${bbs}&sm_std=${sms}&use_ml_filter=${useMl}&setup_mode=${setupMode}&enable_liquidity_sweeps=${enableLiq}&enable_rsi_adx=${enableRsi}&enable_vwap=${enableVwap}&enable_mtf=${enableMtf}`;
+    const d = await (await fetch(url)).json();
     const m = d.metrics;
     $('bt-wr').textContent  = fmtPct(m.win_rate);
     $('bt-exp').textContent = fmtR(m.expectancy);

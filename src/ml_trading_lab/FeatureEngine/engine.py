@@ -21,6 +21,12 @@ class FeatureEngine:
         self.atr_period = self.parameters.get("atr_period", 14)
         self.ema_trend_period = self.parameters.get("ema_trend_period", 20)
 
+        # Modular Feature Flags (Disableable)
+        self.enable_liquidity_sweeps = self.parameters.get("enable_liquidity_sweeps", True)
+        self.enable_rsi_adx = self.parameters.get("enable_rsi_adx", True)
+        self.enable_vwap = self.parameters.get("enable_vwap", True)
+        self.enable_mtf = self.parameters.get("enable_mtf", True)
+
     def transform(self, market_data: pl.DataFrame) -> pl.DataFrame:
         """Return feature rows aligned with source timestamps without look-ahead bias.
 
@@ -102,23 +108,100 @@ class FeatureEngine:
         # Clean up intermediate columns
         df = df.drop(["close_prev", "tr", "bb_std_series", "sm_std_series"])
 
-        # 5.5. Liquidity Sweep features (look-ahead free: shift(1) excludes current bar)
-        df = df.with_columns([
-            pl.col("high").shift(1).rolling_max(window_size=20).alias("high_prev_max_20"),
-            pl.col("low").shift(1).rolling_min(window_size=20).alias("low_prev_min_20"),
-            pl.col("high").shift(1).rolling_max(window_size=50).alias("high_prev_max_50"),
-            pl.col("low").shift(1).rolling_min(window_size=50).alias("low_prev_min_50"),
-        ])
+        # 5.5. Liquidity Sweep features (Gated by enable_liquidity_sweeps)
+        if self.enable_liquidity_sweeps:
+            df = df.with_columns([
+                pl.col("high").shift(1).rolling_max(window_size=20).alias("high_prev_max_20"),
+                pl.col("low").shift(1).rolling_min(window_size=20).alias("low_prev_min_20"),
+                pl.col("high").shift(1).rolling_max(window_size=50).alias("high_prev_max_50"),
+                pl.col("low").shift(1).rolling_min(window_size=50).alias("low_prev_min_50"),
+            ])
 
-        df = df.with_columns([
-            ((pl.col("low") < pl.col("low_prev_min_20")) & (pl.col("close") > pl.col("low_prev_min_20"))).cast(pl.Float64).alias("liq_sweep_bull_20"),
-            ((pl.col("high") > pl.col("high_prev_max_20")) & (pl.col("close") < pl.col("high_prev_max_20"))).cast(pl.Float64).alias("liq_sweep_bear_20"),
-            ((pl.col("low") < pl.col("low_prev_min_50")) & (pl.col("close") > pl.col("low_prev_min_50"))).cast(pl.Float64).alias("liq_sweep_bull_50"),
-            ((pl.col("high") > pl.col("high_prev_max_50")) & (pl.col("close") < pl.col("high_prev_max_50"))).cast(pl.Float64).alias("liq_sweep_bear_50"),
-        ])
+            # Wick and Candle metrics for sweep rejection analysis
+            candle_range = (pl.col("high") - pl.col("low")) + 1e-9
+            upper_wick = pl.col("high") - pl.max_horizontal("open", "close")
+            lower_wick = pl.min_horizontal("open", "close") - pl.col("low")
 
-        # Drop intermediate max/min columns
-        df = df.drop(["high_prev_max_20", "low_prev_min_20", "high_prev_max_50", "low_prev_min_50"])
+            df = df.with_columns([
+                ((pl.col("low") < pl.col("low_prev_min_20")) & (pl.col("close") > pl.col("low_prev_min_20"))).cast(pl.Float64).alias("liq_sweep_bull_20"),
+                ((pl.col("high") > pl.col("high_prev_max_20")) & (pl.col("close") < pl.col("high_prev_max_20"))).cast(pl.Float64).alias("liq_sweep_bear_20"),
+                ((pl.col("low") < pl.col("low_prev_min_50")) & (pl.col("close") > pl.col("low_prev_min_50"))).cast(pl.Float64).alias("liq_sweep_bull_50"),
+                ((pl.col("high") > pl.col("high_prev_max_50")) & (pl.col("close") < pl.col("high_prev_max_50"))).cast(pl.Float64).alias("liq_sweep_bear_50"),
+
+                # Sweep Depth in ATR multiples
+                ((pl.col("low_prev_min_20") - pl.col("low")) / (pl.col("atr") + 1e-8)).alias("liq_sweep_depth_bull_20"),
+                ((pl.col("high") - pl.col("high_prev_max_20")) / (pl.col("atr") + 1e-8)).alias("liq_sweep_depth_bear_20"),
+
+                # Wick rejection ratios
+                (lower_wick / candle_range).alias("liq_sweep_lower_wick_ratio"),
+                (upper_wick / candle_range).alias("liq_sweep_upper_wick_ratio"),
+
+                # Fair Value Gap (FVG) detection
+                ((pl.col("low") > pl.col("high").shift(2))).cast(pl.Float64).alias("fvg_bullish"),
+                ((pl.col("high") < pl.col("low").shift(2))).cast(pl.Float64).alias("fvg_bearish"),
+            ])
+
+            # Drop intermediate max/min columns
+            df = df.drop(["high_prev_max_20", "low_prev_min_20", "high_prev_max_50", "low_prev_min_50"])
+
+        # 5.6 RSI and ADX indicators (Gated by enable_rsi_adx)
+        if self.enable_rsi_adx:
+            # RSI 14
+            diff = pl.col("close") - pl.col("close").shift(1)
+            gain = pl.when(diff > 0).then(diff).otherwise(0.0)
+            loss = pl.when(diff < 0).then(-diff).otherwise(0.0)
+
+            df = df.with_columns([
+                gain.rolling_mean(window_size=14).alias("_avg_gain"),
+                loss.rolling_mean(window_size=14).alias("_avg_loss"),
+            ])
+            df = df.with_columns([
+                (100.0 - (100.0 / (1.0 + (pl.col("_avg_gain") / (pl.col("_avg_loss") + 1e-9))))).alias("rsi_14"),
+            ])
+            df = df.drop(["_avg_gain", "_avg_loss"])
+
+            # ADX 14 (Directional Movement & Trend Strength)
+            up_move = pl.col("high") - pl.col("high").shift(1)
+            down_move = pl.col("low").shift(1) - pl.col("low")
+
+            plus_dm = pl.when((up_move > down_move) & (up_move > 0)).then(up_move).otherwise(0.0)
+            minus_dm = pl.when((down_move > up_move) & (down_move > 0)).then(down_move).otherwise(0.0)
+
+            df = df.with_columns([
+                plus_dm.rolling_mean(window_size=14).alias("_plus_di_raw"),
+                minus_dm.rolling_mean(window_size=14).alias("_minus_di_raw"),
+            ])
+            df = df.with_columns([
+                (100.0 * (pl.col("_plus_di_raw") / (pl.col("atr") + 1e-9))).alias("plus_di_14"),
+                (100.0 * (pl.col("_minus_di_raw") / (pl.col("atr") + 1e-9))).alias("minus_di_14"),
+            ])
+            df = df.with_columns([
+                ((pl.col("plus_di_14") - pl.col("minus_di_14")).abs() / (pl.col("plus_di_14") + pl.col("minus_di_14") + 1e-9) * 100.0).alias("_dx")
+            ])
+            df = df.with_columns([
+                pl.col("_dx").rolling_mean(window_size=14).alias("adx_14"),
+            ])
+            df = df.drop(["_plus_di_raw", "_minus_di_raw", "_dx"])
+
+        # 5.7 VWAP calculation (Gated by enable_vwap)
+        if self.enable_vwap:
+            volume = pl.col("tick_volume").fill_null(1.0)
+            typical_price = (pl.col("high") + pl.col("low") + pl.col("close")) / 3.0
+            tp_vol = typical_price * volume
+
+            df = df.with_columns([
+                tp_vol.alias("_tp_vol"),
+                volume.alias("_vol"),
+            ])
+
+            # Rolling 200 bar VWAP approximation or session cumulative VWAP
+            df = df.with_columns([
+                (pl.col("_tp_vol").rolling_sum(window_size=100) / (pl.col("_vol").rolling_sum(window_size=100) + 1e-9)).alias("vwap_100"),
+            ])
+            df = df.with_columns([
+                ((pl.col("close") - pl.col("vwap_100")) / (pl.col("atr") + 1e-8)).alias("close_to_vwap_atr"),
+            ])
+            df = df.drop(["_tp_vol", "_vol"])
 
         # 6. Session and Time Context
         df = df.with_columns([
@@ -139,6 +222,7 @@ class FeatureEngine:
         ])
 
         return df
+
 
     def join_htf_trend(self, df_m1: pl.DataFrame, df_m3: pl.DataFrame) -> pl.DataFrame:
         """Join M3 trend alignment signals to M1 bars with zero look-ahead bias."""

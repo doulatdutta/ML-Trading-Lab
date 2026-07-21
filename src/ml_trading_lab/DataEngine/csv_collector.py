@@ -51,6 +51,8 @@ class CSVMarketDataCollector(MarketDataCollector):
 
         # Fallback to generating synthetic data if files do not exist
         print(f"Historical file not found at {csv_path} or {parquet_path}. Generating synthetic {symbol} {timeframe} data...")
+        start_dt = datetime.strptime(start, "%Y-%m-%d") if start else datetime(2023, 1, 1)
+        end_dt = datetime.strptime(f"{end} 23:59:59", "%Y-%m-%d %H:%M:%S") if end else datetime(2023, 1, 31, 23, 59, 59)
         df_synthetic = self._generate_synthetic_bars(symbol, timeframe, start_dt, end_dt)
 
         # Make sure directory exists and write file for subsequent usage
